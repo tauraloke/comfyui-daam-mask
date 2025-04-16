@@ -1,8 +1,6 @@
 from inspect import cleandoc
 
 import comfy.samplers
-from comfy.comfy_types import IO, ComfyNodeABC, InputTypeDict
-
 import latent_preview
 import torch
 
@@ -12,16 +10,16 @@ from .daam.heatmap import GlobalHeatMap, HeatMapProcessor
 from PIL import Image
 
 
-class CLIPTextEncodeWithTokens(ComfyNodeABC):
+class CLIPTextEncodeWithTokens:
     @classmethod
-    def INPUT_TYPES(s) -> InputTypeDict:
+    def INPUT_TYPES(s):
         return {
             "required": {
-                "text": (IO.STRING, {"multiline": True, "dynamicPrompts": True, "tooltip": "The text to be encoded."}),
-                "clip": (IO.CLIP, {"tooltip": "The CLIP model used for encoding the text."})
+                "text": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "The text to be encoded."}),
+                "clip": ("CLIP", {"tooltip": "The CLIP model used for encoding the text."})
             }
         }
-    RETURN_TYPES = (IO.CONDITIONING, "TOKENS")
+    RETURN_TYPES = ("CONDITIONING", "TOKENS")
     OUTPUT_TOOLTIPS = ("A conditioning containing the embedded text used to guide the diffusion model.",
                        "List of tokens after tokenization.")
     FUNCTION = "encode"
@@ -119,10 +117,10 @@ class DAAMAnalyzer:
     def INPUT_TYPES(s):
         return {
             "required": {
-                "clip": (IO.CLIP, {"tooltip": "The CLIP model used for encoding the text."}),
+                "clip": ("CLIP", {"tooltip": "The CLIP model used for encoding the text."}),
                 "tokens": ("TOKENS", {"tooltip": "The tokens used to encode the prompt.", "forceInput": True}),
                 "heatmaps": ("HEATMAP", {"tooltip": "The heatmap data.", "forceInput": True}),
-                "attentions": (IO.STRING, {"multiline": True, "dynamicPrompts": True, "tooltip": "Attention words to analyze (Comma separated)."}),
+                "attentions": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "Attention words to analyze (Comma separated)."}),
                 "caption": ("BOOLEAN", {"default": True, "tooltip": "Whether to show the attention word as a caption."}),
                 "alpha": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "The alpha value for the overlay."}),
             },
