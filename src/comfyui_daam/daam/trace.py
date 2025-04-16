@@ -4,6 +4,7 @@ from copy import deepcopy
 from pathlib import Path
 from typing import List, Type, Any, Literal, Dict
 import math
+from einops import rearrange, repeat
 
 from comfy.ldm.modules.diffusionmodules.openaimodel import UNetModel
 from comfy.ldm.modules.attention import CrossAttention, default
@@ -145,7 +146,6 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         return (weights * maps).sum(1, keepdim=True).cpu()
 
     def _forward(hk_self, self, x, context=None, value=None, mask=None):
-        # TODO: Revisit this function
         q = self.to_q(x)
         context = default(context, x)
         k = self.to_k(context)
@@ -171,12 +171,12 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         )
 
         out = hk_self._hooked_attention(
-            self, q, k, v, b, dim_head)
+            self, q, k, v, b, dim_head, mask)
 
         return self.to_out(out)
 
     # Capture attentions and aggregate them.
-    def _hooked_attention(hk_self, self, query, key, value, b, dim_head, use_context: bool = True):
+    def _hooked_attention(hk_self, self, query, key, value, b, dim_head, mask, use_context: bool = True):
         def calc_factor_base(w, h):
             z = max(w/64, h/64)
             factor_b = min(w, h) * z
@@ -208,6 +208,21 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
                          q.float(), k.float()) * scale
         else:
             sim = einsum('b i d, b j d -> b i j', q, k) * scale
+
+        del q, k
+        if mask is not None:
+            if mask.dtype == torch.bool:
+                mask = rearrange(mask, 'b ... -> b (...)') #TODO: check if this bool part matches pytorch attention
+                max_neg_value = -torch.finfo(sim.dtype).max
+                mask = repeat(mask, 'b j -> (b h) () j', h=h)
+                sim.masked_fill_(~mask, max_neg_value)
+            else:
+                if len(mask.shape) == 2:
+                    bs = 1
+                else:
+                    bs = mask.shape[0]
+                mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(b, self.heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
+                sim.add_(mask)
 
         factor = int(math.sqrt(factor_base // sim.shape[1]))
 

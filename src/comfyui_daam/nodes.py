@@ -29,7 +29,8 @@ class CLIPTextEncodeWithTokens:
 
     def encode(self, clip, text):
         tokens = clip.tokenize(text)
-        output = clip.encode_from_tokens(tokens, return_pooled=True, return_dict=True)
+        output = clip.encode_from_tokens(
+            tokens, return_pooled=True, return_dict=True)
         cond = output.pop("cond")
         return ([[cond, output]], tokens)
 
@@ -73,7 +74,6 @@ class KSamplerDAAM:
                 "positive": ("CONDITIONING", {"tooltip": "The conditioning describing the attributes you want to include in the image."}),
                 "negative": ("CONDITIONING", {"tooltip": "The conditioning describing the attributes you want to exclude from the image."}),
                 "latent_image": ("LATENT", {"tooltip": "The latent image to denoise."}),
-                "vae": ("VAE", {"tooltip": "The VAE model used for encoding the latent."}),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01, "tooltip": "The amount of denoising applied, lower values will maintain the structure of the initial image allowing for image to image sampling."}),
             }
         }
@@ -86,10 +86,11 @@ class KSamplerDAAM:
     CATEGORY = "sampling"
     DESCRIPTION = "Uses the provided model, positive and negative conditioning to denoise the latent image."
 
-    def sample(self, model, vae, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
+    def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
         _, _, lh, lw = latent_image["samples"].shape
-        img_height = lh * vae.upscale_ratio
-        img_width = lw * vae.upscale_ratio
+
+        img_height = lh * 8
+        img_width = lw * 8
 
         self.tracers = [trace(model, img_height, img_width)]
 
@@ -132,8 +133,8 @@ class DAAMAnalyzer:
     OUTPUT_TOOLTIPS = ("The heatmap image.",)
     FUNCTION = "analyze"
 
-    CATEGORY = "sampling"
-    DESCRIPTION = "Uses the provided model, positive and negative conditioning to denoise the latent image."
+    CATEGORY = "image"
+    DESCRIPTION = "Generates a heatmap image from the attention maps and overlays it on the input images."
 
     def analyze(self, clip, tokens, heatmaps, attentions, caption, alpha, images=None):
         self.attentions = attentions.split(",")
