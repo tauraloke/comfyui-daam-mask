@@ -143,7 +143,7 @@ class HeatMapProcessor:
 
             img = Image.blend(base_img, heat_map_img, alpha)
         else:
-            img = img.copy()
+            img = base_img.copy()
 
         if caption:
             img = HeatMapProcessor._write_on_image(img, caption)
