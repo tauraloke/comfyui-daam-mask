@@ -1,0 +1,228 @@
+from __future__ import annotations
+from collections import defaultdict
+from copy import deepcopy
+from pathlib import Path
+from typing import List, Type, Any, Literal, Dict
+import math
+
+from comfy.ldm.modules.diffusionmodules.openaimodel import UNetModel
+from comfy.ldm.modules.attention import CrossAttention, default, get_attn_precision
+
+import torch
+import torch.nn.functional as F
+from torch import einsum
+
+from .hook import ObjectHooker, AggregateHooker, UNetCrossAttentionLocator
+
+
+__all__ = ['trace', 'DiffusionHeatMapHooker']
+
+
+class UNetForwardHooker(ObjectHooker[UNetModel]):
+    def __init__(self, module: UNetModel, heat_maps: defaultdict(defaultdict)):
+        super().__init__(module)
+        self.all_heat_maps = []
+        self.heat_maps = heat_maps
+
+    def _hook_impl(self):
+        self.monkey_patch('forward', self._forward)
+
+    def _unhook_impl(self):
+        pass
+
+    def _forward(hk_self, self, *args, **kwargs):
+        super_return = hk_self.monkey_super('forward', *args, **kwargs)
+
+        if len(hk_self.heat_maps) > 0:
+            hk_self.all_heat_maps.append(deepcopy(hk_self.heat_maps))
+
+        hk_self.heat_maps.clear()
+
+        return super_return
+
+
+class DiffusionHeatMapHooker(AggregateHooker):
+    def __init__(self, model, heigth: int, width: int, context_size: int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None):
+        # batch index, factor, attention
+        heat_maps = defaultdict(lambda: defaultdict(list))
+        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx)
+                   for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
+        self.forward_hook = UNetForwardHooker(
+            model.model.diffusion_model, heat_maps)
+        modules.append(self.forward_hook)
+
+        self.height = heigth
+        self.width = width
+        self.model = model
+        self.last_prompt = ''
+
+        super().__init__(modules)
+
+    @property
+    def all_heat_maps(self):
+        return self.forward_hook.all_heat_maps
+
+    def reset(self):
+        map(lambda module: module.reset(), self.module)
+        return self.forward_hook.all_heat_maps.clear()
+
+# Adapted from A1111's DAAM Extension and Official ComfyUI
+# https://github.com/kousw/stable-diffusion-webui-daam/blob/b23fb574bf691f0bdf503e5617a0b3578160c7a1/scripts/daam/trace.py#L204
+# https://github.com/comfyanonymous/ComfyUI/blob/6fc5dbd52ab70952020e6bc486c4d851a7ba6625/comfy/ldm/modules/attention.py#L613
+
+
+class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
+    def __init__(self, module: CrossAttention, img_height: int, img_width: int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0):
+        super().__init__(module)
+        self.heat_maps = heat_maps
+        self.context_size = context_size
+        self.weighted = weighted
+        self.head_idx = head_idx
+        self.img_height = img_height
+        self.img_width = img_width
+        self.calledCount = 0
+
+    def reset(self):
+        self.heat_maps.clear()
+        self.calledCount = 0
+
+    @torch.no_grad()
+    def _up_sample_attn(self, x, value, factor, method='bicubic'):
+        # type: (torch.Tensor, torch.Tensor, int, Literal['bicubic', 'conv']) -> torch.Tensor
+        # x shape: (heads, height * width, tokens)
+        """
+        Up samples the attention map in x using interpolation to the maximum size of (64, 64), as assumed in the Stable
+        Diffusion model.
+
+        Args:
+            x (`torch.Tensor`): cross attention slice/map between the words and the tokens.
+            value (`torch.Tensor`): the value tensor.
+            method (`str`): the method to use; one of `'bicubic'` or `'conv'`.
+
+        Returns:
+            `torch.Tensor`: the up-sampled attention map of shape (tokens, 1, height, width).
+        """
+        weight = torch.full((factor, factor), 1 / factor ** 2, device=x.device)
+        weight = weight.view(1, 1, factor, factor)
+
+        h = int(math.sqrt((self.img_height * x.size(1)) / self.img_width))
+        w = int(self.img_width * h / self.img_height)
+
+        h_fix = w_fix = 64
+        if h >= w:
+            w_fix = int((w * h_fix) / h)
+        else:
+            h_fix = int((h * w_fix) / w)
+
+        maps = []
+        x = x.permute(2, 0, 1)
+        value = value.permute(1, 0, 2)
+        weights = 1
+
+        with torch.cuda.amp.autocast(dtype=torch.float32):
+            for map_ in x:
+                map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
+
+                if method == 'bicubic':
+                    map_ = F.interpolate(map_, size=(
+                        h_fix, w_fix), mode='bicubic')
+                    maps.append(map_.squeeze(1))
+                else:
+                    maps.append(F.conv_transpose2d(
+                        map_, weight, stride=factor).squeeze(1))
+
+        if self.weighted:
+            weights = value.norm(p=1, dim=-1, keepdim=True).unsqueeze(-1)
+
+        maps = torch.stack(maps, 0)  # shape: (tokens, heads, height, width)
+
+        if self.head_idx:
+            maps = maps[:, self.head_idx:self.head_idx+1, :, :]
+
+        return (weights * maps).sum(1, keepdim=True).cpu()
+
+    def _forward(hk_self, self, x, context=None, value=None, mask=None):
+        # TODO: Revisit this function
+        q = self.to_q(x)
+        context = default(context, x)
+        k = self.to_k(context)
+        if value is not None:
+            v = self.to_v(value)
+            del value
+        else:
+            v = self.to_v(context)
+
+        hk_self.calledCount += 1
+
+        heads = self.heads
+        b, _, dim_head = q.shape
+        dim_head //= heads
+
+        q, k, v = map(
+            lambda t: t.unsqueeze(3)
+            .reshape(b, -1, heads, dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(b * heads, -1, dim_head)
+            .contiguous(),
+            (q, k, v),
+        )
+
+        out = hk_self._hooked_attention(
+            self, q, k, v, b, dim_head)
+
+        return self.to_out(out)
+
+    # Capture attentions and aggregate them.
+    def _hooked_attention(hk_self, self, query, key, value, b, dim_head, use_context: bool = True):
+        def calc_factor_base(w, h):
+            z = max(w/64, h/64)
+            factor_b = min(w, h) * z
+            return factor_b
+
+        factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
+
+        q = query
+        k = key
+        v = value
+
+        attn_precision = get_attn_precision(self.attn_precision, q.dtype)
+        scale = dim_head ** -0.5
+
+        # force cast to fp32 to avoid overflowing
+        if attn_precision == torch.float32:
+            sim = einsum('b i d, b j d -> b i j',
+                         q.float(), k.float()) * scale
+        else:
+            sim = einsum('b i d, b j d -> b i j', q, k) * scale
+
+        factor = int(math.sqrt(factor_base // sim.shape[1]))
+
+        # Attention
+        sim = sim.softmax(-1)
+
+        if use_context and hk_self.calledCount % 2 == 0 and sim.shape[-1] == hk_self.context_size:
+            if factor >= 1:
+                factor //= 1
+                maps = hk_self._up_sample_attn(sim, value, factor)
+                hk_self.heat_maps[0][factor].append(maps)
+
+        out = einsum('b i j, b j d -> b i d', sim.to(v.dtype), v)
+
+        out = (
+            out.unsqueeze(0)
+            .reshape(b, self.heads, -1, dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(b, -1, self.heads * dim_head)
+        )
+
+        return out
+
+    def _hook_impl(self):
+        self.monkey_patch('forward', self._forward)
+
+    @property
+    def num_heat_maps(self):
+        return len(next(iter(self.heat_maps.values())))
+
+
+trace: Type[DiffusionHeatMapHooker] = DiffusionHeatMapHooker

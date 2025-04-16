@@ -1,0 +1,13 @@
+[project]
+name = "comfyui-daam"
+description = "ComfyUI custom nodes for DAAM"
+version = "0.0.1"
+license = { file = "LICENSE" }
+
+[project.urls]
+Repository = "https://github.com/nisaruj/comfyui-daam"
+
+[tool.comfy]
+PublisherId = "nisaruj"
+DisplayName = "ComfyUI-DAAM"
+Icon = ""
