@@ -6,7 +6,10 @@ from typing import List, Type, Any, Literal, Dict
 import math
 
 from comfy.ldm.modules.diffusionmodules.openaimodel import UNetModel
-from comfy.ldm.modules.attention import CrossAttention, default, get_attn_precision
+from comfy.ldm.modules.attention import CrossAttention, default
+from comfy import model_management
+
+from comfy.cli_args import args
 
 import torch
 import torch.nn.functional as F
@@ -185,7 +188,18 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         k = key
         v = value
 
+        def get_attn_precision(attn_precision, current_dtype):
+            FORCE_UPCAST_ATTENTION_DTYPE = model_management.force_upcast_attention_dtype()
+
+            if args.dont_upcast_attention:
+                return None
+
+            if FORCE_UPCAST_ATTENTION_DTYPE is not None and current_dtype in FORCE_UPCAST_ATTENTION_DTYPE:
+                return FORCE_UPCAST_ATTENTION_DTYPE[current_dtype]
+            return attn_precision
+        
         attn_precision = get_attn_precision(self.attn_precision, q.dtype)
+        
         scale = dim_head ** -0.5
 
         # force cast to fp32 to avoid overflowing

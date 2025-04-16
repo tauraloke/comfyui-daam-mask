@@ -7,7 +7,7 @@ This extension enables visualization of cross-attention heatmaps within Stable D
 This project was adapted from the [SD Web UI implementation](https://github.com/kousw/stable-diffusion-webui-daam).  
 Special thanks to [@kousw](https://github.com/kousw) for the original work!
 
-Tested on SDXL models.
+Tested on SDXL models. ComfyUI v0.3.27 and Rev. 2469 (Released on 2024-08-05)
 
 ## Sample Workflow
 
@@ -21,6 +21,13 @@ Clone this repo into your ComfyUI `custom_nodes` directory:
 
 ```bash
 git clone https://github.com/nisaruj/comfyui-daam.git
+
+```
+
+Then install the required packages
+```
+cd comfyui-daam
+python -s -m pip install -r requirements.txt
 ```
 
 Restart ComfyUI.
