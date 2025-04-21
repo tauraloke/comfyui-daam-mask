@@ -1,8 +1,7 @@
 from __future__ import annotations
 from collections import defaultdict
 from copy import deepcopy
-from pathlib import Path
-from typing import List, Type, Any, Literal, Dict
+from typing import Type, Literal
 import math
 from einops import rearrange, repeat
 
@@ -159,7 +158,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         hk_self.calledCount += 1
 
         heads = self.heads
-        b, _, dim_head = q.shape
+        b, sequence_length, dim_head = q.shape
         dim_head //= heads
 
         q, k, v = map(
@@ -172,18 +171,25 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         )
 
         out = hk_self._hooked_attention(
-            self, q, k, v, b, dim_head, mask)
+            self, q, k, v, b, sequence_length, dim_head, mask)
 
         return self.to_out(out)
 
     # Capture attentions and aggregate them.
-    def _hooked_attention(hk_self, self, query, key, value, b, dim_head, mask, use_context: bool = True):
+    def _hooked_attention(hk_self, self, query, key, value, batch_size, sequence_length, dim_head, mask, use_context: bool = True):
         def calc_factor_base(w, h):
             z = max(w/64, h/64)
             factor_b = min(w, h) * z
             return factor_b
 
         factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
+        batch_size_attention = query.shape[0]
+        slice_size = batch_size_attention // batch_size
+
+        out = torch.zeros(
+            (batch_size_attention, sequence_length,
+             dim_head), device=query.device, dtype=query.dtype
+        )
 
         q = query
         k = key
@@ -203,48 +209,57 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
 
         scale = dim_head ** -0.5
 
-        # force cast to fp32 to avoid overflowing
-        if attn_precision == torch.float32:
-            sim = einsum('b i d, b j d -> b i j',
-                         q.float(), k.float()) * scale
-        else:
-            sim = einsum('b i d, b j d -> b i j', q, k) * scale
+        for batch_index in range(batch_size):
+            start_idx = batch_index * slice_size
+            end_idx = (batch_index + 1) * slice_size
+
+            # force cast to fp32 to avoid overflowing
+            if attn_precision == torch.float32:
+                sim_slice = einsum('b i d, b j d -> b i j',
+                                   q[start_idx:end_idx].float(), k[start_idx:end_idx].float()) * scale
+            else:
+                sim_slice = einsum(
+                    'b i d, b j d -> b i j', q[start_idx:end_idx], k[start_idx:end_idx]) * scale
+
+            if mask is not None:
+                if mask.dtype == torch.bool:
+                    # TODO: check if this bool part matches pytorch attention
+                    mask = rearrange(mask, 'b ... -> b (...)')
+                    max_neg_value = -torch.finfo(sim_slice.dtype).max
+                    mask = repeat(mask, 'b j -> (b h) () j', h=self.heads)
+                    sim_slice.masked_fill_(~mask, max_neg_value)
+                else:
+                    if len(mask.shape) == 2:
+                        bs = 1
+                    else:
+                        bs = mask.shape[0]
+                    mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(
+                        batch_size, self.heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
+                    sim_slice.add_(mask)
+
+            factor = int(math.sqrt(factor_base // sim_slice.shape[1]))
+
+            # Attention
+            sim_slice = sim_slice.softmax(-1)
+
+            if use_context and sim_slice.shape[-1] == hk_self.context_size and hk_self.heat_maps_save_condition(hk_self.calledCount):
+                if factor >= 1:
+                    factor //= 1
+                    maps = hk_self._up_sample_attn(sim_slice, value, factor)
+                    hk_self.heat_maps[batch_index][factor].append(maps)
+
+            out_slice = einsum('b i j, b j d -> b i d',
+                               sim_slice.to(v.dtype), v[start_idx:end_idx])
+
+            out[start_idx:end_idx] = out_slice
 
         del q, k
-        if mask is not None:
-            if mask.dtype == torch.bool:
-                # TODO: check if this bool part matches pytorch attention
-                mask = rearrange(mask, 'b ... -> b (...)')
-                max_neg_value = -torch.finfo(sim.dtype).max
-                mask = repeat(mask, 'b j -> (b h) () j', h=self.heads)
-                sim.masked_fill_(~mask, max_neg_value)
-            else:
-                if len(mask.shape) == 2:
-                    bs = 1
-                else:
-                    bs = mask.shape[0]
-                mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(
-                    b, self.heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
-                sim.add_(mask)
-
-        factor = int(math.sqrt(factor_base // sim.shape[1]))
-
-        # Attention
-        sim = sim.softmax(-1)
-
-        if use_context and sim.shape[-1] == hk_self.context_size and hk_self.heat_maps_save_condition(hk_self.calledCount):
-            if factor >= 1:
-                factor //= 1
-                maps = hk_self._up_sample_attn(sim, value, factor)
-                hk_self.heat_maps[0][factor].append(maps)
-
-        out = einsum('b i j, b j d -> b i d', sim.to(v.dtype), v)
 
         out = (
             out.unsqueeze(0)
-            .reshape(b, self.heads, -1, dim_head)
+            .reshape(batch_size, self.heads, -1, dim_head)
             .permute(0, 2, 1, 3)
-            .reshape(b, -1, self.heads * dim_head)
+            .reshape(batch_size, -1, self.heads * dim_head)
         )
 
         return out

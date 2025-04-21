@@ -86,26 +86,24 @@ class KSamplerDAAM:
     CATEGORY = "sampling"
     DESCRIPTION = "Uses the provided model, positive and negative conditioning to denoise the latent image."
 
-    def get_heat_maps_save_condition(self, model: comfy.model_base.BaseModel):
-        # TODO: Investigate why it works like this
+    def get_heat_maps_save_condition(self, model: comfy.model_base.BaseModel, batch_size):
         if isinstance(model, comfy.model_base.SDXL):
             return lambda calledCount: calledCount % 2 == 0
         else:
-            # For SD1.5
-            return lambda calledCount: calledCount % 2 == 1
+            # For SD 1.5
+            # TODO: Investigate why it works like this
+            return lambda calledCount: calledCount % 2 == batch_size % 2
 
     def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
-        _, _, lh, lw = latent_image["samples"].shape
+        batch_size, _, lh, lw = latent_image["samples"].shape
 
         img_height = lh * 8
         img_width = lw * 8
 
         self.tracers = [trace(model, img_height, img_width,
-                              heat_maps_save_condition=self.get_heat_maps_save_condition(model.model))]
+                              heat_maps_save_condition=self.get_heat_maps_save_condition(model.model, batch_size=batch_size))]
 
         enable_daam = len(self.tracers) > 0
-
-        # TODO: Batch support
 
         if enable_daam:
             for tracer in self.tracers:
@@ -158,7 +156,7 @@ class DAAMAnalyzer:
             image = images[batch_index]
 
             global_heat_map = GlobalHeatMap(
-                self.prompt_analyzer, heatmaps)
+                self.prompt_analyzer, heatmaps, batch_index)
 
             for attention in self.attentions:
                 heat_map = global_heat_map.compute_word_heat_map(attention)

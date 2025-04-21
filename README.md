@@ -7,13 +7,17 @@ This extension enables visualization of cross-attention heatmaps within Stable D
 This project was adapted from the [SD Web UI implementation](https://github.com/kousw/stable-diffusion-webui-daam).  
 Special thanks to [@kousw](https://github.com/kousw) for the original work!
 
-Tested on SDXL models. ComfyUI v0.3.27 and Rev. 2469 (Released on 2024-08-05)
-
-## Sample Workflow
+**Supported Models**
+- SDXL
+- SD 1.5
 
 ![Sample Workflow](https://github.com/nisaruj/comfyui-daam/blob/main/img/workflow.png)
 
+
+
 ## Installation
+
+Now Available on [Comfy Registry](https://registry.comfy.org/) and [ComfyUI Manager](https://github.com/Comfy-Org/ComfyUI-Manager)!
 
 ### Manual Install
 
@@ -21,11 +25,10 @@ Clone this repo into your ComfyUI `custom_nodes` directory:
 
 ```bash
 git clone https://github.com/nisaruj/comfyui-daam.git
-
 ```
 
 Then install the required packages
-```
+```bash
 cd comfyui-daam
 python -s -m pip install -r requirements.txt
 ```
@@ -53,13 +56,13 @@ A hooked version of `KSampler`. During sampling, it records attention maps for l
 
 ### `DAAMAnalyzer`
 
-This node generates overlay heatmaps that show which parts of the image correspond to selected words in your prompt.
+This node generates overlay heatmaps that show which parts of the image correspond to selected words in the prompt.
 
 **Inputs:**
-- `clip` – CLIP model used to encode the attention text
+- `clip` — CLIP model used to encode the attention text
 - `tokens` — from `CLIPTextEncodeWithTokens`
 - `heatmaps` — from `KSamplerDAAM`
-- `images` — the output image to overlay the heatmaps
+- `images` — the output images to overlay the heatmaps
 - A **text box** for comma-separated words to generate heatmaps
 
 **Output:**
@@ -70,4 +73,15 @@ This node generates overlay heatmaps that show which parts of the image correspo
 
 ## Example Result
 
+**Prompt:** A photo of corgi with a cowboy hat riding a skateboard in the park
+
+**Attention Words**: corgi,skateboard,hat,park
+
 ![DAAM Result](https://github.com/nisaruj/comfyui-daam/blob/main/img/preview.png)
+
+## Changelog
+
+- **0.2.0**
+    - Batch and SD1.5 Support
+- **0.1.1**
+    - Initial Version with SDXL support

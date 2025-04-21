@@ -18,12 +18,9 @@ __all__ = ['GlobalHeatMap', 'HeatMapProcessor']
 
 
 class GlobalHeatMap:
-    def __init__(self, prompt_analyzer, heat_maps: torch.Tensor):
+    def __init__(self, prompt_analyzer, heat_maps: torch.Tensor, batch_index):
         self.prompt_analyzer = prompt_analyzer
-
-        # TODO: Batch support
-        print('Heatmap Length:', len(heat_maps))
-        self.heat_maps = self.compute_global_heat_map(heat_maps, 0)
+        self.heat_maps = self.compute_global_heat_map(heat_maps, batch_index)
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
         merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
