@@ -2,18 +2,28 @@ class PromptAnalyzer:
     def __init__(self, clip, all_tokens):
         self.clip = clip
         self.tokens = all_tokens
+        self.end_token = self._get_end_token()
+
+    def _get_end_token(self):
+        return self.clip.cond_stage_model.clip_l.special_tokens['end']
+
+    def _get_tokens_list(self, tokens):
+        return tokens['l'][0]
 
     def encode(self, text: str):
-        tokens = self.clip.tokenize(text)['g'][0]
+        tokens = self.clip.tokenize(text)
+        tokens = self._get_tokens_list(tokens)
+
         for i in range(len(tokens)):
-            if tokens[i][0] == self.clip.cond_stage_model.clip_g.special_tokens['end']:
+            if tokens[i][0] == self.end_token:
                 return tokens[1:i]
 
     def calc_word_indecies(self, word: str, limit: int = -1, start_pos=0):
         word = word.lower()
         merge_idxs = []
 
-        tokens = self.tokens['g'][0]
+        tokens = self.tokens
+        tokens = self._get_tokens_list(tokens)
         needles = self.encode(word)
 
         limit_count = 0

@@ -46,10 +46,10 @@ class UNetForwardHooker(ObjectHooker[UNetModel]):
 
 
 class DiffusionHeatMapHooker(AggregateHooker):
-    def __init__(self, model, heigth: int, width: int, context_size: int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None):
+    def __init__(self, model, heigth: int, width: int, context_size: int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None, heat_maps_save_condition: callable = lambda calledCount: calledCount % 2 == 0):
         # batch index, factor, attention
         heat_maps = defaultdict(lambda: defaultdict(list))
-        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx)
+        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx, heat_maps_save_condition=heat_maps_save_condition)
                    for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
         self.forward_hook = UNetForwardHooker(
             model.model.diffusion_model, heat_maps)
@@ -76,7 +76,7 @@ class DiffusionHeatMapHooker(AggregateHooker):
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
-    def __init__(self, module: CrossAttention, img_height: int, img_width: int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0):
+    def __init__(self, module: CrossAttention, img_height: int, img_width: int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0, heat_maps_save_condition: callable = lambda calledCount: calledCount % 2 == 0):
         super().__init__(module)
         self.heat_maps = heat_maps
         self.context_size = context_size
@@ -85,6 +85,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.img_height = img_height
         self.img_width = img_width
         self.calledCount = 0
+        self.heat_maps_save_condition = heat_maps_save_condition
 
     def reset(self):
         self.heat_maps.clear()
@@ -197,9 +198,9 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             if FORCE_UPCAST_ATTENTION_DTYPE is not None and current_dtype in FORCE_UPCAST_ATTENTION_DTYPE:
                 return FORCE_UPCAST_ATTENTION_DTYPE[current_dtype]
             return attn_precision
-        
+
         attn_precision = get_attn_precision(self.attn_precision, q.dtype)
-        
+
         scale = dim_head ** -0.5
 
         # force cast to fp32 to avoid overflowing
@@ -212,16 +213,18 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         del q, k
         if mask is not None:
             if mask.dtype == torch.bool:
-                mask = rearrange(mask, 'b ... -> b (...)') #TODO: check if this bool part matches pytorch attention
+                # TODO: check if this bool part matches pytorch attention
+                mask = rearrange(mask, 'b ... -> b (...)')
                 max_neg_value = -torch.finfo(sim.dtype).max
-                mask = repeat(mask, 'b j -> (b h) () j', h=h)
+                mask = repeat(mask, 'b j -> (b h) () j', h=self.heads)
                 sim.masked_fill_(~mask, max_neg_value)
             else:
                 if len(mask.shape) == 2:
                     bs = 1
                 else:
                     bs = mask.shape[0]
-                mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(b, self.heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
+                mask = mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1]).expand(
+                    b, self.heads, -1, -1).reshape(-1, mask.shape[-2], mask.shape[-1])
                 sim.add_(mask)
 
         factor = int(math.sqrt(factor_base // sim.shape[1]))
@@ -229,7 +232,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         # Attention
         sim = sim.softmax(-1)
 
-        if use_context and hk_self.calledCount % 2 == 0 and sim.shape[-1] == hk_self.context_size:
+        if use_context and sim.shape[-1] == hk_self.context_size and hk_self.heat_maps_save_condition(hk_self.calledCount):
             if factor >= 1:
                 factor //= 1
                 maps = hk_self._up_sample_attn(sim, value, factor)

@@ -1,6 +1,6 @@
-from inspect import cleandoc
-
 import comfy.samplers
+import comfy.model_base
+
 import latent_preview
 import torch
 
@@ -86,13 +86,22 @@ class KSamplerDAAM:
     CATEGORY = "sampling"
     DESCRIPTION = "Uses the provided model, positive and negative conditioning to denoise the latent image."
 
+    def get_heat_maps_save_condition(self, model: comfy.model_base.BaseModel):
+        # TODO: Investigate why it works like this
+        if isinstance(model, comfy.model_base.SDXL):
+            return lambda calledCount: calledCount % 2 == 0
+        else:
+            # For SD1.5
+            return lambda calledCount: calledCount % 2 == 1
+
     def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
         _, _, lh, lw = latent_image["samples"].shape
 
         img_height = lh * 8
         img_width = lw * 8
 
-        self.tracers = [trace(model, img_height, img_width)]
+        self.tracers = [trace(model, img_height, img_width,
+                              heat_maps_save_condition=self.get_heat_maps_save_condition(model.model))]
 
         enable_daam = len(self.tracers) > 0
 
