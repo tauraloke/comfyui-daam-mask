@@ -4,16 +4,13 @@
 
 This extension enables visualization of cross-attention heatmaps within Stable Diffusion models, showing exactly which parts of the image correspond to specific words in the prompt.
 
-This project was adapted from the [SD Web UI implementation](https://github.com/kousw/stable-diffusion-webui-daam).  
-Special thanks to [@kousw](https://github.com/kousw) for the original work!
+Tested with SDXL and SD 1.5 models.
 
-**Supported Models**
-- SDXL
-- SD 1.5
+Example workflows are available in [workflows](https://github.com/nisaruj/comfyui-daam/tree/main/workflows).
 
 ![Sample Workflow](https://github.com/nisaruj/comfyui-daam/blob/main/img/workflow.png)
 
-
+This project was adapted from the [SD Web UI implementation](https://github.com/kousw/stable-diffusion-webui-daam).  Special thanks to [@kousw](https://github.com/kousw) for the original work!
 
 ## Installation
 
@@ -82,6 +79,8 @@ This node generates overlay heatmaps that show which parts of the image correspo
 ## Changelog
 
 - **0.2.0**
-    - Batch and SD1.5 Support
+    - Added support for batched inputs
+    - SD 1.5 models compatibility
+    - Bug fixes and stability improvements
 - **0.1.1**
     - Initial Version with SDXL support
