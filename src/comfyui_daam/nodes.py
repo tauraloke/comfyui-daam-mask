@@ -91,7 +91,9 @@ class KSamplerDAAM:
         img_height = lh * 8
         img_width = lw * 8
 
-        self.tracers = [trace(model, img_height, img_width)]
+        _, context_size, _ = positive[0][0].shape
+
+        self.tracers = [trace(model, img_height, img_width, context_size=context_size)]
 
         enable_daam = len(self.tracers) > 0
 
