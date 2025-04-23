@@ -1,5 +1,4 @@
 import comfy.samplers
-import comfy.model_base
 
 import latent_preview
 import torch
@@ -86,22 +85,13 @@ class KSamplerDAAM:
     CATEGORY = "sampling"
     DESCRIPTION = "Uses the provided model, positive and negative conditioning to denoise the latent image."
 
-    def get_heat_maps_save_condition(self, model: comfy.model_base.BaseModel, batch_size):
-        if isinstance(model, comfy.model_base.SDXL):
-            return lambda calledCount: calledCount % 2 == 0
-        else:
-            # For SD 1.5
-            # TODO: Investigate why it works like this
-            return lambda calledCount: calledCount % 2 == batch_size % 2
-
     def sample(self, model, seed, steps, cfg, sampler_name, scheduler, positive, negative, latent_image, denoise=1.0):
-        batch_size, _, lh, lw = latent_image["samples"].shape
+        _, _, lh, lw = latent_image["samples"].shape
 
         img_height = lh * 8
         img_width = lw * 8
 
-        self.tracers = [trace(model, img_height, img_width,
-                              heat_maps_save_condition=self.get_heat_maps_save_condition(model.model, batch_size=batch_size))]
+        self.tracers = [trace(model, img_height, img_width)]
 
         enable_daam = len(self.tracers) > 0
 
@@ -130,8 +120,6 @@ class DAAMAnalyzer:
                 "attentions": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "Attention words to analyze (Comma separated)."}),
                 "caption": ("BOOLEAN", {"default": True, "tooltip": "Whether to show the attention word as a caption."}),
                 "alpha": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "The alpha value for the overlay."}),
-            },
-            "optional": {
                 "images": ("IMAGE", {"tooltip": "Output Images"}),
             }
         }

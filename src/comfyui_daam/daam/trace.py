@@ -21,6 +21,35 @@ from .hook import ObjectHooker, AggregateHooker, UNetCrossAttentionLocator
 __all__ = ['trace', 'DiffusionHeatMapHooker']
 
 
+class ModelFunctionWrapper:
+    """
+    ComfyUI determines whether run cond/uncond in 2 batches or 1 batch for each, based on free memory.
+    This will affect how we collect the heatmaps, so we need to keep track the cond_or_uncond variable.
+    len(cond_or_uncond) = 1: either cond [0] or uncond [1]
+    len(cond_or_uncond) = 2: uncond and cond in the same run [1, 0]
+    https://github.com/comfyanonymous/ComfyUI/blob/92cdc692f47188e6e4c48c5666ac802281240a37/comfy/samplers.py#L260
+    """
+
+    def __init__(self):
+        self.cond_or_uncond = None
+
+    def cond_uncond_as_two_batches(self):
+        """
+        Returns True if the model is running cond/uncond in 2 batches.
+        This is the case when there is enough memory to run both in the same time.
+        """
+        return self.cond_or_uncond and self.cond_or_uncond == 2
+
+    def model_wrapper(self, unet_apply_function, unet_params) -> torch.Tensor:
+        c = unet_params["c"]
+
+        self.cond_or_uncond = len(unet_params["cond_or_uncond"])
+
+        output = unet_apply_function(
+            unet_params["input"], unet_params["timestep"], **c)
+        return output
+
+
 class UNetForwardHooker(ObjectHooker[UNetModel]):
     def __init__(self, module: UNetModel, heat_maps: defaultdict(defaultdict)):
         super().__init__(module)
@@ -45,10 +74,13 @@ class UNetForwardHooker(ObjectHooker[UNetModel]):
 
 
 class DiffusionHeatMapHooker(AggregateHooker):
-    def __init__(self, model, heigth: int, width: int, context_size: int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None, heat_maps_save_condition: callable = lambda calledCount: calledCount % 2 == 0):
+    def __init__(self, model, heigth: int, width: int, context_size: int = 77, weighted: bool = False, layer_idx: int = None, head_idx: int = None):
         # batch index, factor, attention
         heat_maps = defaultdict(lambda: defaultdict(list))
-        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx, heat_maps_save_condition=heat_maps_save_condition)
+
+        self.model_wrapper = ModelFunctionWrapper()
+
+        modules = [UNetCrossAttentionHooker(x, heigth, width, heat_maps, context_size=context_size, weighted=weighted, head_idx=head_idx, cond_or_uncond_tracker=self.model_wrapper)
                    for x in UNetCrossAttentionLocator().locate(model.model.diffusion_model, layer_idx)]
         self.forward_hook = UNetForwardHooker(
             model.model.diffusion_model, heat_maps)
@@ -69,13 +101,26 @@ class DiffusionHeatMapHooker(AggregateHooker):
         map(lambda module: module.reset(), self.module)
         return self.forward_hook.all_heat_maps.clear()
 
+    def _hook_impl(self):
+        self.model.set_model_unet_function_wrapper(
+            self.model_wrapper.model_wrapper)
+
+        for h in self.module:
+            h.hook()
+
+    def _unhook_impl(self):
+        self.model.set_model_unet_function_wrapper(None)
+
+        for h in self.module:
+            h.unhook()
+
 # Adapted from A1111's DAAM Extension and Official ComfyUI
 # https://github.com/kousw/stable-diffusion-webui-daam/blob/b23fb574bf691f0bdf503e5617a0b3578160c7a1/scripts/daam/trace.py#L204
 # https://github.com/comfyanonymous/ComfyUI/blob/6fc5dbd52ab70952020e6bc486c4d851a7ba6625/comfy/ldm/modules/attention.py#L613
 
 
 class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
-    def __init__(self, module: CrossAttention, img_height: int, img_width: int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0, heat_maps_save_condition: callable = lambda calledCount: calledCount % 2 == 0):
+    def __init__(self, module: CrossAttention, img_height: int, img_width: int, heat_maps: defaultdict(defaultdict), context_size: int = 77, weighted: bool = False, head_idx: int = 0, cond_or_uncond_tracker=None):
         super().__init__(module)
         self.heat_maps = heat_maps
         self.context_size = context_size
@@ -84,7 +129,7 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         self.img_height = img_height
         self.img_width = img_width
         self.calledCount = 0
-        self.heat_maps_save_condition = heat_maps_save_condition
+        self.cond_or_uncond_tracker = cond_or_uncond_tracker
 
     def reset(self):
         self.heat_maps.clear()
@@ -155,8 +200,6 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         else:
             v = self.to_v(context)
 
-        hk_self.calledCount += 1
-
         heads = self.heads
         b, sequence_length, dim_head = q.shape
         dim_head //= heads
@@ -173,27 +216,25 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
         out = hk_self._hooked_attention(
             self, q, k, v, b, sequence_length, dim_head, mask)
 
+        hk_self.calledCount += 1
+
         return self.to_out(out)
 
     # Capture attentions and aggregate them.
-    def _hooked_attention(hk_self, self, query, key, value, batch_size, sequence_length, dim_head, mask, use_context: bool = True):
+    def _hooked_attention(hk_self, self, q, k, v, batch_size, sequence_length, dim_head, mask, use_context: bool = True):
         def calc_factor_base(w, h):
             z = max(w/64, h/64)
             factor_b = min(w, h) * z
             return factor_b
 
         factor_base = calc_factor_base(hk_self.img_width, hk_self.img_height)
-        batch_size_attention = query.shape[0]
+        batch_size_attention = q.shape[0]
         slice_size = batch_size_attention // batch_size
 
         out = torch.zeros(
             (batch_size_attention, sequence_length,
-             dim_head), device=query.device, dtype=query.dtype
+             dim_head), device=q.device, dtype=q.dtype
         )
-
-        q = query
-        k = key
-        v = value
 
         def get_attn_precision(attn_precision, current_dtype):
             FORCE_UPCAST_ATTENTION_DTYPE = model_management.force_upcast_attention_dtype()
@@ -242,14 +283,27 @@ class UNetCrossAttentionHooker(ObjectHooker[CrossAttention]):
             # Attention
             sim_slice = sim_slice.softmax(-1)
 
-            if use_context and sim_slice.shape[-1] == hk_self.context_size and hk_self.heat_maps_save_condition(hk_self.calledCount):
-                if factor >= 1:
-                    factor //= 1
-                    maps = hk_self._up_sample_attn(sim_slice, value, factor)
-                    hk_self.heat_maps[batch_index][factor].append(maps)
-
             out_slice = einsum('b i j, b j d -> b i d',
                                sim_slice.to(v.dtype), v[start_idx:end_idx])
+
+            if use_context and sim_slice.shape[-1] == hk_self.context_size:
+                if hk_self.cond_or_uncond_tracker and hk_self.cond_or_uncond_tracker.cond_uncond_as_two_batches():
+                    # Cond and uncond in the same run
+                    # The first half of batch is unconditional, the second half is conditional.
+                    if batch_index >= batch_size // 2:
+                        if factor >= 1:
+                            factor //= 1
+                            maps = hk_self._up_sample_attn(
+                                sim_slice, v, factor)
+                            hk_self.heat_maps[batch_index -
+                                              batch_size // 2][factor].append(maps)
+
+                elif hk_self.calledCount % 2 == 1:
+                    # Cond and uncond in different runs. Keep the second calls for the conditional.
+                    if factor >= 1:
+                        factor //= 1
+                        maps = hk_self._up_sample_attn(sim_slice, v, factor)
+                        hk_self.heat_maps[batch_index][factor].append(maps)
 
             out[start_idx:end_idx] = out_slice
 
