@@ -1,6 +1,5 @@
-from inspect import cleandoc
-
 import comfy.samplers
+
 import latent_preview
 import torch
 
@@ -92,11 +91,11 @@ class KSamplerDAAM:
         img_height = lh * 8
         img_width = lw * 8
 
-        self.tracers = [trace(model, img_height, img_width)]
+        _, context_size, _ = positive[0][0].shape
+
+        self.tracers = [trace(model, img_height, img_width, context_size=context_size)]
 
         enable_daam = len(self.tracers) > 0
-
-        # TODO: Batch support
 
         if enable_daam:
             for tracer in self.tracers:
@@ -123,8 +122,6 @@ class DAAMAnalyzer:
                 "attentions": ("STRING", {"multiline": True, "dynamicPrompts": True, "tooltip": "Attention words to analyze (Comma separated)."}),
                 "caption": ("BOOLEAN", {"default": True, "tooltip": "Whether to show the attention word as a caption."}),
                 "alpha": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "The alpha value for the overlay."}),
-            },
-            "optional": {
                 "images": ("IMAGE", {"tooltip": "Output Images"}),
             }
         }
@@ -149,7 +146,7 @@ class DAAMAnalyzer:
             image = images[batch_index]
 
             global_heat_map = GlobalHeatMap(
-                self.prompt_analyzer, heatmaps)
+                self.prompt_analyzer, heatmaps, batch_index)
 
             for attention in self.attentions:
                 heat_map = global_heat_map.compute_word_heat_map(attention)
