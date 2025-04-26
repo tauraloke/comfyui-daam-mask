@@ -14,7 +14,7 @@ This project was adapted from the [SD Web UI implementation](https://github.com/
 
 ## Installation
 
-Now Available on [Comfy Registry](https://registry.comfy.org/) and [ComfyUI Manager](https://github.com/Comfy-Org/ComfyUI-Manager)!
+Now Available on [Comfy Registry](https://registry.comfy.org/nodes/comfyui-daam) and [Custom Node Manager](https://github.com/Comfy-Org/ComfyUI-Manager)!
 
 ### Manual Install
 
