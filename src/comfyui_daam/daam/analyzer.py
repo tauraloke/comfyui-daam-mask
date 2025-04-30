@@ -5,10 +5,10 @@ class PromptAnalyzer:
         self.end_token = self._get_end_token()
 
     def _get_end_token(self):
-        return self.clip.cond_stage_model.clip_l.special_tokens['end']
+        return self.clip.cond_stage_model.clip_l.special_tokens["end"]
 
     def _get_tokens_list(self, tokens):
-        return tokens['l'][0]
+        return tokens["l"][0]
 
     def encode(self, text: str):
         tokens = self.clip.tokenize(text)
