@@ -28,6 +28,10 @@ class PromptAnalyzer:
 
         limit_count = 0
         current_pos = 0
+
+        if len(needles) == 0:
+            return merge_idxs, start_pos
+
         for i, token in enumerate(tokens):
             current_pos = i
             if i < start_pos:
