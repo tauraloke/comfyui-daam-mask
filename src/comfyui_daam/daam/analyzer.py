@@ -5,10 +5,10 @@ class PromptAnalyzer:
         self.end_token = self._get_end_token()
 
     def _get_end_token(self):
-        return self.clip.cond_stage_model.clip_l.special_tokens['end']
+        return self.clip.cond_stage_model.clip_l.special_tokens["end"]
 
     def _get_tokens_list(self, tokens):
-        return tokens['l'][0]
+        return tokens["l"][0]
 
     def encode(self, text: str):
         tokens = self.clip.tokenize(text)
@@ -28,6 +28,10 @@ class PromptAnalyzer:
 
         limit_count = 0
         current_pos = 0
+
+        if len(needles) == 0:
+            return merge_idxs, start_pos
+
         for i, token in enumerate(tokens):
             current_pos = i
             if i < start_pos:

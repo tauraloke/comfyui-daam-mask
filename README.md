@@ -4,17 +4,20 @@
 
 **ComfyUI custom nodes for [Diffusion Attentive Attribution Maps (DAAM)](https://github.com/castorini/daam)**
 
-This extension enables visualization of cross-attention heatmaps within Stable Diffusion models, showing exactly which parts of the image correspond to specific words in the prompt.
+This extension enables visualization of cross-attention heatmaps within Stable Diffusion models, showing exactly which parts of the image correspond to specific words in the prompt — good for analyzing and debugging model outputs and LoRA training.
 
-Tested with SDXL and SD 1.5 models.
-
-Example workflows are available in [workflows](https://github.com/nisaruj/comfyui-daam/tree/main/workflows).
+👉 Example workflows are available in [workflows](https://github.com/nisaruj/comfyui-daam/tree/main/workflows).
 
 ![Sample Workflow](https://github.com/nisaruj/comfyui-daam/blob/main/img/workflow.png)
 
 This project was adapted from the [SD Web UI implementation](https://github.com/kousw/stable-diffusion-webui-daam).  Special thanks to [@kousw](https://github.com/kousw) for the original work!
 
-## Installation
+## ✨ Features
+- ✅ Positive / Negative prompt heatmap visualization
+- ✅ SDXL and SD 1.5 support
+- ✅ Batched input support
+
+## 🚀 Installation
 
 Now Available on [Comfy Registry](https://registry.comfy.org/nodes/comfyui-daam) and [Custom Node Manager](https://github.com/Comfy-Org/ComfyUI-Manager)!
 
@@ -35,7 +38,7 @@ python -s -m pip install -r requirements.txt
 Restart ComfyUI.
 
 
-## DAAM Nodes
+## 🧩 DAAM Nodes
 
 ### `CLIPTextEncodeWithTokens`
 
@@ -49,7 +52,8 @@ A hooked version of `KSampler`. During sampling, it records attention maps for l
 
 **Outputs:**
 - `latent` — standard latent output
-- `heatmaps` — raw heatmaps for input into the analyzer
+- `pos_heatmaps` — positive prompt's raw heatmaps for input into the analyzer
+- `neg_heatmaps` — negative prompt's raw heatmaps for input into the analyzer
 
 ![Node: KSamplerDAAM](https://github.com/nisaruj/comfyui-daam/blob/main/img/node_sampler.png)
 
@@ -70,15 +74,19 @@ This node generates overlay heatmaps that show which parts of the image correspo
 ![Node: DAAMAnalyzer](https://github.com/nisaruj/comfyui-daam/blob/main/img/node_analyzer.png)
 
 
-## Example Result
+## 📷 Example Output
 
 **Prompt:** A photo of corgi with a cowboy hat riding a skateboard in the park
 
-**Attention Words**: corgi,skateboard,hat,park
+**Attention words**: corgi,skateboard,hat,park
 
 ![DAAM Result](https://github.com/nisaruj/comfyui-daam/blob/main/img/preview.png)
 
-## Changelog
+## 📦 Changelog
+
+- **0.3.0**
+    - Negative prompt support
+    - Code Refactor and Minor bug fixes
 
 - **0.2.0**
     - Added support for batched inputs
