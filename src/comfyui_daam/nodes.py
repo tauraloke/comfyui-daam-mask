@@ -6,6 +6,7 @@ import torch
 from .daam import analyzer
 from .daam.heatmap import GlobalHeatMap, HeatMapProcessor
 from .daam.patcher import CrossAttentionPatcher
+from .daam.util import is_output_connected
 
 from PIL import Image
 
@@ -182,7 +183,8 @@ class KSamplerDAAM:
                         "tooltip": "The amount of denoising applied, lower values will maintain the structure of the initial image allowing for image to image sampling.",
                     },
                 ),
-            }
+            },
+            "hidden": {"prompt": "PROMPT", "node_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = ("LATENT", "HEATMAP", "HEATMAP")
@@ -205,6 +207,8 @@ class KSamplerDAAM:
         negative,
         latent_image,
         denoise=1.0,
+        prompt=None,
+        node_id=None,
     ):
         _, _, lh, lw = latent_image["samples"].shape
 
@@ -214,11 +218,15 @@ class KSamplerDAAM:
         _, pos_context_size, _ = positive[0][0].shape
         _, neg_context_size, _ = negative[0][0].shape
 
+        # Optimization: Only collect heatmaps when needed
+        enable_pos_heat_maps = is_output_connected(prompt, node_id, 1)
+        enable_neg_heat_maps = is_output_connected(prompt, node_id, 2)
+
         patcher = CrossAttentionPatcher(
             img_height,
             img_width,
-            pos_context_size=pos_context_size,
-            neg_context_size=neg_context_size,
+            context_size=(pos_context_size, neg_context_size),
+            enable_heat_maps=(enable_pos_heat_maps, enable_neg_heat_maps),
         )
         patcher.patch(model)
 
@@ -235,11 +243,9 @@ class KSamplerDAAM:
             denoise=denoise,
         )
 
-        return (
-            latent_out,
-            patcher.heat_maps["pos"].all_heat_maps,
-            patcher.heat_maps["neg"].all_heat_maps,
-        )
+        pos_heat_maps, neg_heat_maps = patcher.all_heat_maps
+
+        return (latent_out, pos_heat_maps, neg_heat_maps)
 
 
 class DAAMAnalyzer:

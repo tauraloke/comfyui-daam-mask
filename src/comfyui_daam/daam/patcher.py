@@ -40,23 +40,33 @@ class CrossAttentionPatcher:
         self,
         img_height: int,
         img_width: int,
-        pos_context_size: int = 77,
-        neg_context_size: int = 77,
+        context_size: tuple[int, int] = (77, 77),  # [0] for positive, [1] for negative
+        enable_heat_maps: tuple[bool, bool] = (
+            True,
+            True,
+        ),  # [0] for positive, [1] for negative
         weighted: bool = False,
         head_idx: int = 0,
     ):
         self.img_height = img_height
         self.img_width = img_width
         self.heat_maps = {
-            "pos": RawHeatMaps(),
-            "neg": RawHeatMaps(),
+            "pos": RawHeatMaps() if enable_heat_maps[0] else None,
+            "neg": RawHeatMaps() if enable_heat_maps[1] else None,
         }
-        self.context_size = {
-            "pos": pos_context_size,
-            "neg": neg_context_size,
-        }
+        self.context_size = context_size
         self.weighted = weighted
         self.head_idx = head_idx
+
+    @property
+    def all_heat_maps(self):
+        pos_heat_maps = (
+            self.heat_maps["pos"].all_heat_maps if self.heat_maps["pos"] else None
+        )
+        neg_heat_maps = (
+            self.heat_maps["neg"].all_heat_maps if self.heat_maps["neg"] else None
+        )
+        return pos_heat_maps, neg_heat_maps
 
     def patch(self, model_patcher, layer_idx: int = None):
         self.block_tags = UNetCrossAttentionLocator().locate(
@@ -250,10 +260,13 @@ class CrossAttentionPatcher:
             )
 
             if heat_map_added:
-                for pos_or_neg in self.heat_maps.keys():
-                    if self.heat_maps[pos_or_neg].count() >= len(self.block_tags):
-                        # Save the heatmaps for each timestep
-                        self.heat_maps[pos_or_neg].save_heat_map_timestep()
+                for pos_or_neg_heat_maps in self.heat_maps.values():
+                    if (
+                        pos_or_neg_heat_maps is not None
+                        and pos_or_neg_heat_maps.count() >= len(self.block_tags)
+                    ):
+                        # Flush the heatmaps for each timestep
+                        pos_or_neg_heat_maps.save_heat_map_timestep()
 
             out[start_idx:end_idx] = out_slice
 
@@ -287,28 +300,36 @@ class CrossAttentionPatcher:
         # len(cond_or_uncond) = 1: either cond [0] or uncond [1]
         # len(cond_or_uncond) = 2: uncond and cond in the same run [1, 0]
         # https://github.com/comfyanonymous/ComfyUI/blob/92cdc692f47188e6e4c48c5666ac802281240a37/comfy/samplers.py#L260
-        if len(cond_or_uncond) == 2 and sim_slice.shape[-1] == max(
-            self.context_size["pos"], self.context_size["neg"]
-        ):
+        if len(cond_or_uncond) == 2 and sim_slice.shape[-1] == max(self.context_size):
             # Combined conditional/unconditional in the same batch
-            maps = self._up_sample_attn(sim_slice, value, factor)
-
             half = batch_size // 2
-            if batch_index >= half:
+            if batch_index >= half and self.heat_maps["pos"] is not None:
+                # Conditional batch
+                maps = self._up_sample_attn(sim_slice, value, factor)
                 self.heat_maps["pos"].add_heat_map(batch_index - half, factor, maps)
-            else:
+            elif self.heat_maps["neg"] is not None:
+                # Unconditional batch
+                maps = self._up_sample_attn(sim_slice, value, factor)
                 self.heat_maps["neg"].add_heat_map(batch_index, factor, maps)
 
             return True
 
-        elif sim_slice.shape[-1] == self.context_size["pos"] and cond_or_uncond == [0]:
+        elif (
+            sim_slice.shape[-1] == self.context_size[0]
+            and cond_or_uncond == [0]
+            and self.heat_maps["pos"] is not None
+        ):
             # Separate conditional batch
             maps = self._up_sample_attn(sim_slice, value, factor)
             self.heat_maps["pos"].add_heat_map(batch_index, factor, maps)
 
             return True
 
-        elif sim_slice.shape[-1] == self.context_size["neg"] and cond_or_uncond == [1]:
+        elif (
+            sim_slice.shape[-1] == self.context_size[1]
+            and cond_or_uncond == [1]
+            and self.heat_maps["neg"] is not None
+        ):
             # Separate unconditional batch
             maps = self._up_sample_attn(sim_slice, value, factor)
             self.heat_maps["neg"].add_heat_map(batch_index, factor, maps)

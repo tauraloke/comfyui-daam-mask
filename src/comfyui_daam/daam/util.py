@@ -44,3 +44,22 @@ class UNetCrossAttentionLocator(ModuleLocator[CrossAttention]):
         extract_from_blocks("output", model.output_blocks)
 
         return block_tags
+
+
+def is_output_connected(
+    prompt,
+    cur_node_id,
+    output_index,
+) -> bool:
+    for node_id in prompt:
+        if node_id == cur_node_id:
+            continue
+
+        for node_input in prompt[node_id]["inputs"].values():
+            if isinstance(node_input, list) and node_input == [
+                cur_node_id,
+                output_index,
+            ]:
+                return True
+
+    return False
