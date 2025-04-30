@@ -3,8 +3,9 @@ import comfy.samplers
 import latent_preview
 import torch
 
-from .daam import trace, analyzer
+from .daam import analyzer
 from .daam.heatmap import GlobalHeatMap, HeatMapProcessor
+from .daam.patcher import CrossAttentionPatcher
 
 from PIL import Image
 
@@ -93,22 +94,13 @@ class KSamplerDAAM:
 
         _, context_size, _ = positive[0][0].shape
 
-        self.tracers = [trace(model, img_height, img_width, context_size=context_size)]
-
-        enable_daam = len(self.tracers) > 0
-
-        if enable_daam:
-            for tracer in self.tracers:
-                tracer.hook()
+        patcher = CrossAttentionPatcher(img_height, img_width, context_size=context_size)
+        patcher.patch(model)
 
         (latent_out, ) = common_ksampler(model, seed, steps, cfg, sampler_name,
                                          scheduler, positive, negative, latent_image, denoise=denoise)
 
-        if enable_daam:
-            for tracer in self.tracers:
-                tracer.unhook()
-
-        return (latent_out, self.tracers[0].all_heat_maps)
+        return (latent_out, patcher.all_heat_maps)
 
 
 class DAAMAnalyzer:

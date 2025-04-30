@@ -1,0 +1,265 @@
+from __future__ import annotations
+from collections import defaultdict
+from copy import deepcopy
+
+from einops import rearrange, repeat
+
+import torch
+import torch.nn.functional as F
+from torch import einsum
+
+import math
+
+from .util import UNetCrossAttentionLocator
+
+
+class CrossAttentionPatcher:
+    def __init__(
+        self,
+        img_height: int,
+        img_width: int,
+        context_size: int = 77,
+        weighted: bool = False,
+        head_idx: int = 0,
+    ):
+        self.img_height = img_height
+        self.img_width = img_width
+        self.heat_maps = defaultdict(lambda: defaultdict(list))
+        self.heat_maps_count = 0
+        self.context_size = context_size
+        self.weighted = weighted
+        self.head_idx = head_idx
+        self.all_heat_maps = []
+
+    def patch(self, model_patcher, layer_idx: int = None):
+        self.block_tags = UNetCrossAttentionLocator().locate(
+            model_patcher.model.diffusion_model, layer_idx=layer_idx
+        )
+
+        for block_name, layer_idx, transformer_index in self.block_tags:
+            model_patcher.set_model_patch_replace(
+                self._attn2_patched, "attn2", block_name, layer_idx, transformer_index
+            )
+
+    @torch.no_grad()
+    def _up_sample_attn(self, x, value, factor, method="bicubic"):
+        # type: (torch.Tensor, torch.Tensor, int, Literal['bicubic', 'conv']) -> torch.Tensor
+        # x shape: (heads, height * width, tokens)
+        """
+        Up samples the attention map in x using interpolation to the maximum size of (64, 64), as assumed in the Stable
+        Diffusion model.
+
+        Args:
+            x (`torch.Tensor`): cross attention slice/map between the words and the tokens.
+            value (`torch.Tensor`): the value tensor.
+            method (`str`): the method to use; one of `'bicubic'` or `'conv'`.
+
+        Returns:
+            `torch.Tensor`: the up-sampled attention map of shape (tokens, 1, height, width).
+        """
+        weight = torch.full((factor, factor), 1 / factor**2, device=x.device)
+        weight = weight.view(1, 1, factor, factor)
+
+        h = int(math.sqrt((self.img_height * x.size(1)) / self.img_width))
+        w = int(self.img_width * h / self.img_height)
+
+        h_fix = w_fix = 64
+        if h >= w:
+            w_fix = int((w * h_fix) / h)
+        else:
+            h_fix = int((h * w_fix) / w)
+
+        maps = []
+        x = x.permute(2, 0, 1)
+        value = value.permute(1, 0, 2)
+        weights = 1
+
+        with torch.cuda.amp.autocast(dtype=torch.float32):
+            for map_ in x:
+                map_ = map_.unsqueeze(1).view(map_.size(0), 1, h, w)
+
+                if method == "bicubic":
+                    map_ = F.interpolate(map_, size=(h_fix, w_fix), mode="bicubic")
+                    maps.append(map_.squeeze(1))
+                else:
+                    maps.append(
+                        F.conv_transpose2d(map_, weight, stride=factor).squeeze(1)
+                    )
+
+        if self.weighted:
+            weights = value.norm(p=1, dim=-1, keepdim=True).unsqueeze(-1)
+
+        maps = torch.stack(maps, 0)  # shape: (tokens, heads, height, width)
+
+        if self.head_idx:
+            maps = maps[:, self.head_idx : self.head_idx + 1, :, :]
+
+        return (weights * maps).sum(1, keepdim=True).cpu()
+
+    def _attn2_patched(self, q, context=None, value=None, extra_options={}, mask=None):
+        k = context
+        v = value
+
+        n_heads = extra_options["n_heads"]
+        dim_head = extra_options["dim_head"]
+        attn_precision = extra_options["attn_precision"]
+        cond_or_uncond = extra_options["cond_or_uncond"]
+
+        b, sequence_length, _ = q.shape
+
+        q, k, v = map(
+            lambda t: t.unsqueeze(3)
+            .reshape(b, -1, n_heads, dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(b * n_heads, -1, dim_head)
+            .contiguous(),
+            (q, k, v),
+        )
+
+        out = self._basic_attention_patched(
+            q,
+            k,
+            v,
+            b,
+            sequence_length,
+            n_heads,
+            dim_head,
+            mask,
+            cond_or_uncond,
+            attn_precision,
+        )
+
+        return out
+
+    def _basic_attention_patched(
+        self,
+        q,
+        k,
+        v,
+        batch_size,
+        sequence_length,
+        n_heads,
+        dim_head,
+        mask,
+        cond_or_uncond,
+        attn_precision,
+    ):
+        def calc_factor_base(w, h):
+            z = max(w / 64, h / 64)
+            factor_b = min(w, h) * z
+            return factor_b
+
+        factor_base = calc_factor_base(self.img_width, self.img_height)
+        batch_size_attention = q.shape[0]
+        slice_size = batch_size_attention // batch_size
+
+        out = torch.zeros(
+            (batch_size_attention, sequence_length, dim_head),
+            device=q.device,
+            dtype=q.dtype,
+        )
+
+        scale = dim_head**-0.5
+
+        for batch_index in range(batch_size):
+            start_idx = batch_index * slice_size
+            end_idx = (batch_index + 1) * slice_size
+
+            # force cast to fp32 to avoid overflowing
+            if attn_precision == torch.float32:
+                sim_slice = (
+                    einsum(
+                        "b i d, b j d -> b i j",
+                        q[start_idx:end_idx].float(),
+                        k[start_idx:end_idx].float(),
+                    )
+                    * scale
+                )
+            else:
+                sim_slice = (
+                    einsum(
+                        "b i d, b j d -> b i j",
+                        q[start_idx:end_idx],
+                        k[start_idx:end_idx],
+                    )
+                    * scale
+                )
+
+            if mask is not None:
+                if mask.dtype == torch.bool:
+                    # TODO: check if this bool part matches pytorch attention
+                    mask = rearrange(mask, "b ... -> b (...)")
+                    max_neg_value = -torch.finfo(sim_slice.dtype).max
+                    mask = repeat(mask, "b j -> (b h) () j", h=n_heads)
+                    sim_slice.masked_fill_(~mask, max_neg_value)
+                else:
+                    if len(mask.shape) == 2:
+                        bs = 1
+                    else:
+                        bs = mask.shape[0]
+                    mask = (
+                        mask.reshape(bs, -1, mask.shape[-2], mask.shape[-1])
+                        .expand(batch_size, n_heads, -1, -1)
+                        .reshape(-1, mask.shape[-2], mask.shape[-1])
+                    )
+                    sim_slice.add_(mask)
+
+            factor = int(math.sqrt(factor_base // sim_slice.shape[1]))
+
+            # Attention
+            sim_slice = sim_slice.softmax(-1)
+
+            out_slice = einsum(
+                "b i j, b j d -> b i d", sim_slice.to(v.dtype), v[start_idx:end_idx]
+            )
+
+            # ComfyUI determines whether run cond/uncond in 2 batches or 1 batch for each, based on free memory.
+            # This will affect how we collect the heatmaps, so we need to keep track the cond_or_uncond variable.
+            # len(cond_or_uncond) = 1: either cond [0] or uncond [1]
+            # len(cond_or_uncond) = 2: uncond and cond in the same run [1, 0]
+            # https://github.com/comfyanonymous/ComfyUI/blob/92cdc692f47188e6e4c48c5666ac802281240a37/comfy/samplers.py#L260
+
+            if sim_slice.shape[-1] == self.context_size:
+                if len(cond_or_uncond) == 2:
+                    # Cond and uncond in the same run
+                    # The first half of batch is unconditional, the second half is conditional.
+                    if batch_index >= batch_size // 2:
+                        if factor >= 1:
+                            factor //= 1
+                            maps = self._up_sample_attn(sim_slice, v, factor)
+                            self.heat_maps[batch_index - batch_size // 2][
+                                factor
+                            ].append(maps)
+                            self.heat_maps_count += 1
+
+                elif cond_or_uncond[0] == 0:
+                    # Cond and uncond in different runs. Keep the conditional heatmaps.
+                    if factor >= 1:
+                        factor //= 1
+                        maps = self._up_sample_attn(sim_slice, v, factor)
+                        self.heat_maps[batch_index][factor].append(maps)
+                        self.heat_maps_count += 1
+
+            if self.heat_maps_count >= len(self.block_tags):
+                # Save the heatmaps for each timestep
+                self._save_heat_maps_timestep()
+
+            out[start_idx:end_idx] = out_slice
+
+        del q, k
+
+        out = (
+            out.unsqueeze(0)
+            .reshape(batch_size, n_heads, -1, dim_head)
+            .permute(0, 2, 1, 3)
+            .reshape(batch_size, -1, n_heads * dim_head)
+        )
+
+        return out
+
+    def _save_heat_maps_timestep(self):
+        if len(self.heat_maps) > 0:
+            self.all_heat_maps.append(deepcopy(self.heat_maps))
+
+        self.heat_maps.clear()
+        self.heat_maps_count = 0
