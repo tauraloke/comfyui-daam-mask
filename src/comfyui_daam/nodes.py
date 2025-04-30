@@ -185,8 +185,8 @@ class KSamplerDAAM:
             }
         }
 
-    RETURN_TYPES = ("LATENT", "HEATMAP")
-    RETURN_NAMES = ("latent", "heatmaps")
+    RETURN_TYPES = ("LATENT", "HEATMAP", "HEATMAP")
+    RETURN_NAMES = ("latent", "pos_heatmaps", "neg_heatmaps")
     OUTPUT_TOOLTIPS = ("The denoised latent.", "The heatmap data.")
     FUNCTION = "sample"
 
@@ -211,10 +211,14 @@ class KSamplerDAAM:
         img_height = lh * 8
         img_width = lw * 8
 
-        _, context_size, _ = positive[0][0].shape
+        _, pos_context_size, _ = positive[0][0].shape
+        _, neg_context_size, _ = negative[0][0].shape
 
         patcher = CrossAttentionPatcher(
-            img_height, img_width, context_size=context_size
+            img_height,
+            img_width,
+            pos_context_size=pos_context_size,
+            neg_context_size=neg_context_size,
         )
         patcher.patch(model)
 
@@ -231,7 +235,11 @@ class KSamplerDAAM:
             denoise=denoise,
         )
 
-        return (latent_out, patcher.all_heat_maps)
+        return (
+            latent_out,
+            patcher.heat_maps["pos"].all_heat_maps,
+            patcher.heat_maps["neg"].all_heat_maps,
+        )
 
 
 class DAAMAnalyzer:
