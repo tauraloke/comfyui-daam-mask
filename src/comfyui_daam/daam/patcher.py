@@ -256,7 +256,7 @@ class CrossAttentionPatcher:
                 sim_slice,
                 v,
                 cond_or_uncond,
-                batch_size_attention,
+                batch_size,
             )
 
             if heat_map_added:
