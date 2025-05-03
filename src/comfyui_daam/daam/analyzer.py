@@ -1,3 +1,6 @@
+from itertools import chain
+
+
 class PromptAnalyzer:
     def __init__(self, clip, all_tokens):
         self.clip = clip
@@ -8,7 +11,7 @@ class PromptAnalyzer:
         return self.clip.cond_stage_model.clip_l.special_tokens["end"]
 
     def _get_tokens_list(self, tokens):
-        return tokens["l"][0]
+        return list(chain.from_iterable(tokens["l"]))
 
     def encode(self, text: str):
         tokens = self.clip.tokenize(text)
@@ -37,11 +40,11 @@ class PromptAnalyzer:
             if i < start_pos:
                 continue
 
-            if needles[0] == token and len(needles) > 1:
+            if needles[0][0] == token[0] and len(needles) > 1:
                 next = i + 1
                 success = True
                 for needle in needles[1:]:
-                    if next >= len(tokens) or needle != tokens[next]:
+                    if next >= len(tokens) or needle[0] != tokens[next][0]:
                         success = False
                         break
                     next += 1
@@ -54,7 +57,7 @@ class PromptAnalyzer:
                         if limit_count >= limit:
                             break
 
-            elif needles[0] == token:
+            elif needles[0][0] == token[0]:
                 merge_idxs.append(i)
                 if limit > 0:
                     limit_count += 1
