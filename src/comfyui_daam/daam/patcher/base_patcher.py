@@ -7,8 +7,8 @@ import torch.nn.functional as F
 
 import math
 
-from .util import UNetCrossAttentionLocator
-from .attention import attention_sub_quad_patched
+from ..util import UNetCrossAttentionLocator
+from ..attention import attention_sub_quad_patched
 
 
 class RawHeatMaps:

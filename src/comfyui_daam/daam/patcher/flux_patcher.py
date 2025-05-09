@@ -7,10 +7,10 @@ from comfy.ldm.flux.layers import DoubleStreamBlock, apply_mod
 
 import torch
 
-from .patcher import BaseAttentionPatcher
-from .attention import attention_sub_quad_patched
+from .base_patcher import BaseAttentionPatcher
+from ..attention import attention_sub_quad_patched
 
-from .util import ObjectHooker, AggregateHooker
+from ..util import ObjectHooker, AggregateHooker
 
 
 __all__ = ["FluxAttentionPatcher"]

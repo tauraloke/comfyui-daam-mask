@@ -6,10 +6,8 @@ import torch
 
 from .daam import analyzer
 from .daam.heatmap import GlobalHeatMap, HeatMapProcessor
-from .daam.patcher import CrossAttentionPatcher
+from .daam.patcher import CrossAttentionPatcher, FluxAttentionPatcher
 from .daam.util import is_output_connected
-
-from .daam.flux_patcher import FluxAttentionPatcher
 
 from PIL import Image
 
