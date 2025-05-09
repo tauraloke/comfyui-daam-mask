@@ -17,6 +17,9 @@ class GlobalHeatMap:
         self.heat_maps = self.compute_global_heat_map(heat_maps, batch_index)
 
     def compute_word_heat_map(self, word: str, word_idx: int = None) -> torch.Tensor:
+        if word_idx:
+            return self.heat_maps[word_idx]
+
         merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
 
         if len(merge_idxs) == 0:

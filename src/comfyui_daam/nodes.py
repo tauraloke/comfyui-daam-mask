@@ -1,4 +1,5 @@
 import comfy.samplers
+import comfy.model_base
 
 import latent_preview
 import torch
@@ -7,6 +8,8 @@ from .daam import analyzer
 from .daam.heatmap import GlobalHeatMap, HeatMapProcessor
 from .daam.patcher import CrossAttentionPatcher
 from .daam.util import is_output_connected
+
+from .daam.flux_patcher import FluxAttentionPatcher
 
 from PIL import Image
 
@@ -222,7 +225,13 @@ class KSamplerDAAM:
         enable_pos_heat_maps = is_output_connected(prompt, node_id, 1)
         enable_neg_heat_maps = is_output_connected(prompt, node_id, 2)
 
-        patcher = CrossAttentionPatcher(
+        if isinstance(model.model, comfy.model_base.Flux):
+            patcher_class = FluxAttentionPatcher
+        else:
+            # SDXL & BaseModel (SD1.5)
+            patcher_class = CrossAttentionPatcher
+
+        patcher = patcher_class(
             model,
             img_height,
             img_width,
