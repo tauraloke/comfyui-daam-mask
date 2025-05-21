@@ -20,7 +20,7 @@ class GlobalHeatMap:
         if word_idx:
             return self.heat_maps[word_idx]
 
-        merge_idxs, _ = self.prompt_analyzer.calc_word_indecies(word)
+        merge_idxs = self.prompt_analyzer.calc_word_indices(word)
 
         if len(merge_idxs) == 0:
             return None
