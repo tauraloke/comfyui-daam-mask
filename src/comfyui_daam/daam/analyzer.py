@@ -57,6 +57,11 @@ class PromptAnalyzer:
 
     def _calc_word_indices_clip(self, word: str, limit: int = -1, start_pos=0):
         word = word.lower()
+
+        # Handle special case for parentheses at the end of the word
+        if word.endswith(")"):
+            word += ","
+
         merge_idxs = []
 
         tokens = self.tokens
