@@ -93,8 +93,9 @@ class BaseAttentionPatcher:
         weight = torch.full((factor, factor), 1 / factor**2, device=x.device)
         weight = weight.view(1, 1, factor, factor)
 
-        h = int(math.sqrt((self.img_height * x.size(1)) / self.img_width))
-        w = int(self.img_width * h / self.img_height)
+        ratio = (x.size(1) / (self.img_height * self.img_width)) ** 0.5
+        h = int(round(self.img_height * ratio))
+        w = int(round(self.img_width * ratio))
 
         h_fix = w_fix = 64
         if h >= w:
