@@ -3,7 +3,6 @@ from collections import defaultdict
 from typing import Type
 from einops import rearrange
 
-from comfy.ldm.flux.layers import DoubleStreamBlock, apply_mod
 from comfy.ldm.modules.diffusionmodules.mmdit import JointBlock
 
 from comfy.ldm.modules.attention import optimized_attention

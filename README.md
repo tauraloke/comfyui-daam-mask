@@ -14,8 +14,8 @@ This project was adapted from the [SD Web UI implementation](https://github.com/
 
 ## ✨ Features
 - ✅ Positive / Negative prompt heatmap visualization
-- ✅ SDXL and SD 1.5 support
-- ✅ Batched input support
+- ✅ SDXL, SD1.5, SD3 support
+- ✅ Flux Dev support (Beta)
 
 ## 🚀 Installation
 
@@ -32,7 +32,7 @@ git clone https://github.com/nisaruj/comfyui-daam.git
 Then install the required packages
 ```bash
 cd comfyui-daam
-python -s -m pip install -r requirements.txt
+python3 -s -m pip install -r requirements.txt
 ```
 
 Restart ComfyUI.
@@ -83,6 +83,10 @@ This node generates overlay heatmaps that show which parts of the image correspo
 ![DAAM Result](https://github.com/nisaruj/comfyui-daam/blob/main/img/preview.png)
 
 ## 📦 Changelog
+
+- **0.4.0**
+    - Flux and SD3 initial support
+    - Code Refactor and Minor bug fixes
 
 - **0.3.0**
     - Negative prompt support

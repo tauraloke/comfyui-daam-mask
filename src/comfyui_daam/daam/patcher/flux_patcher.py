@@ -223,7 +223,7 @@ class DoubleStreamBlockHooker(ObjectHooker[DoubleStreamBlock]):
 
         # Process the attention probabilities
         height = hk_self.img_height // 16
-        
+
         attn_probs = rearrange(
             attn_probs,
             "(batch heads) (height width) txt_tokens -> batch txt_tokens heads height width",
