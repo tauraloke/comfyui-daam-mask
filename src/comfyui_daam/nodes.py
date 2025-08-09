@@ -362,12 +362,155 @@ class DAAMAnalyzer:
         return (embedded_imgs,)
 
 
+class DAAMMaskFromTokens:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "clip": (
+                    "CLIP",
+                    {"tooltip": "The CLIP model used for encoding the text."},
+                ),
+                "tokens": (
+                    "TOKENS",
+                    {
+                        "tooltip": "The tokens used to encode the prompt.",
+                        "forceInput": True,
+                    },
+                ),
+                "heatmaps": (
+                    "HEATMAP",
+                    {"tooltip": "The heatmap data.", "forceInput": True},
+                ),
+                "attentions": (
+                    "STRING",
+                    {
+                        "multiline": True,
+                        "dynamicPrompts": True,
+                        "tooltip": "Attention words to detect (comma separated).",
+                    },
+                ),
+                "threshold": (
+                    "FLOAT",
+                    {
+                        "default": 0.5,
+                        "min": 0.0,
+                        "max": 1.0,
+                        "step": 0.01,
+                        "round": 0.001,
+                        "tooltip": "Threshold applied to heatmaps to produce a binary mask.",
+                    },
+                ),
+                "images": (
+                    "IMAGE",
+                    {
+                        "tooltip": "Reference images to infer output mask resolution (batch, height, width, channels).",
+                    },
+                ),
+            }
+            ,
+            "optional": {
+                "soft_mask": (
+                    "BOOLEAN",
+                    {
+                        "default": True,
+                        "tooltip": "If enabled, outputs a soft grayscale mask (0..1) without thresholding.",
+                    },
+                ),
+                "combine": (
+                    "STRING",
+                    {
+                        "default": "min",
+                        "choices": ["min", "mul", "max"],
+                        "tooltip": "How to combine multiple token masks: min (intersection), mul (product), or max (union-like).",
+                    },
+                ),
+                "absolute": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": "Use absolute values without per-map normalization before resizing.",
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("MASK",)
+    OUTPUT_TOOLTIPS = ("Binary mask of detected tokens (intersection for multiple tokens).",)
+    FUNCTION = "mask"
+
+    CATEGORY = "mask"
+    DESCRIPTION = "Produces a mask from token heatmaps. Supports soft (grayscale) masks or binary thresholded masks; multiple tokens can be combined."
+
+    def mask(
+        self,
+        clip,
+        tokens,
+        heatmaps,
+        attentions,
+        threshold,
+        images=None,
+        soft_mask: bool = True,
+        combine: str = "min",
+        absolute: bool = False,
+    ):
+        words = [word for word in map(str.strip, attentions.split(",")) if word]
+
+        prompt_analyzer = analyzer.PromptAnalyzer(clip, tokens)
+
+        batch_count, img_height, img_width, _ = images.shape  # (B, H, W, C)
+
+        batch_masks = []
+        for batch_index in range(batch_count):
+            global_heat_map = GlobalHeatMap(prompt_analyzer, heatmaps, batch_index)
+
+            token_masks = []
+            for word in words:
+                heat_map = global_heat_map.compute_word_heat_map(word)
+
+                if heat_map is None:
+                    # If any token is not found, intersection should be empty
+                    token_mask = torch.zeros((img_height, img_width), dtype=torch.float32)
+                else:
+                    if soft_mask:
+                        token_mask = HeatMapProcessor.expand_image(
+                            heat_map, img_height, img_width, absolute=absolute, threshold=None
+                        ).float()
+                    else:
+                        token_mask = HeatMapProcessor.expand_image(
+                            heat_map, img_height, img_width, absolute=absolute, threshold=threshold
+                        ).float()
+
+                token_masks.append(token_mask)
+
+            if len(token_masks) == 0:
+                # No attentions provided -> empty mask
+                final_mask = torch.zeros((img_height, img_width), dtype=torch.float32)
+            elif len(token_masks) == 1:
+                final_mask = token_masks[0]
+            else:
+                # Combine multiple masks
+                stacked = torch.stack(token_masks, dim=0)
+                if combine == "mul":
+                    final_mask = torch.prod(stacked, dim=0)
+                elif combine == "max":
+                    final_mask, _ = torch.max(stacked, dim=0)
+                else:  # "min" (default intersection)
+                    final_mask, _ = torch.min(stacked, dim=0)
+
+            batch_masks.append(final_mask)
+
+        masks = torch.stack(batch_masks, dim=0)  # [B, H, W]
+        return (masks,)
+
+
 # A dictionary that contains all nodes you want to export with their names
 # NOTE: names should be globally unique
 NODE_CLASS_MAPPINGS = {
     "KSamplerDAAM": KSamplerDAAM,
     "DAAMAnalyzer": DAAMAnalyzer,
     "CLIPTextEncodeWithTokens": CLIPTextEncodeWithTokens,
+    "DAAMMaskFromTokens": DAAMMaskFromTokens,
 }
 
 # A dictionary that contains the friendly/humanly readable titles for the nodes
@@ -375,4 +518,5 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "KSamplerDAAM": "KSampler for DAAM",
     "DAAMAnalyzer": "DAAMAnalyzer",
     "CLIPTextEncodeWithTokens": "CLIP Text Encode (With Tokens)",
+    "DAAMMaskFromTokens": "DAAM Mask From Tokens",
 }
