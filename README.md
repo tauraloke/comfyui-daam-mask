@@ -92,7 +92,9 @@ This node produces mask over image by your tokens. You can use this mask for inp
 **Output:**
 - A mask
 
-![Node: DAAM Mask From Tokens](./img/inpainted.png)
+![Node: DAAM Mask From Tokens](./img/node_mask.png)
+
+![Masking result](./img/inpainted.png)
 
 ## 📦 Changelog
 
