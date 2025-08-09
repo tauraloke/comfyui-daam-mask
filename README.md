@@ -1,7 +1,5 @@
 # ComfyUI DAAM
 
-![Download Count Badge](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.comfy.org%2Fnodes%2Fcomfyui-daam&query=downloads&style=flat-square&label=Downloads&color=green)
-
 **ComfyUI custom nodes for [Diffusion Attentive Attribution Maps (DAAM)](https://github.com/castorini/daam)**
 
 This extension enables visualization of cross-attention heatmaps within Stable Diffusion models, showing exactly which parts of the image correspond to specific words in the prompt — good for analyzing and debugging model outputs and LoRA training. This fork also addes node for extraction a mask by tokens.
@@ -18,8 +16,6 @@ This project was adapted from the [SD Web UI implementation](https://github.com/
 - ✅ Flux Dev support (Beta)
 
 ## 🚀 Installation
-
-Now Available on [Comfy Registry](https://registry.comfy.org/nodes/comfyui-daam) and [Custom Node Manager](https://github.com/Comfy-Org/ComfyUI-Manager)!
 
 ### Manual Install
 
